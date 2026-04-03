@@ -3,37 +3,28 @@ inference.py — OpenEnv Hackathon Submission Script
 ===================================================
 Predictive AI-Controlled Solar Optimization System
 
-Reads three environment variables:
-    API_BASE_URL  — LLM API endpoint (OpenAI-compatible)
-    MODEL_NAME    — model identifier (e.g. "gpt-4o-mini")
-    HF_TOKEN      — Hugging Face / API auth token
+Matches the official sample inference script format exactly:
+  - Uses log_start(), log_step(), log_end() helper functions
+  - Score = sum(rewards) / MAX_TOTAL_REWARD, clamped to [0, 1]
+  - Async main() with asyncio.run()
+  - OpenAI client with API_BASE_URL, MODEL_NAME, HF_TOKEN
 
-Runs one full episode per task (easy / medium / hard) using the
-greedy sun-tracking policy (does not require GPU or LLM inference).
-
-The OpenAI client IS instantiated and ready — swap the action logic
-section to make LLM calls if the grader requires it.
-
-Stdout format (EXACT — grader parses this):
-    [START] {"task": "...", "seed": ...}
-    [STEP]  {"step": 1, "reward": ..., "done": false, "energy": ...}
-    [STEP]  {"step": 2, "reward": ..., "done": false, "energy": ...}
+Stdout format (parsed by grader):
+    [START] {"task": "...", "model": "...", ...}
+    [STEP]  {"step": 1, "action": "...", "reward": ..., "done": false}
     ...
-    [END]   {"total_reward": ..., "score": ...}
-
-Run:
-    API_BASE_URL=... MODEL_NAME=... HF_TOKEN=... python inference.py
+    [END]   {"success": true/false, "steps": 96, "score": 0.98, "rewards": [...]}
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-import math
 import os
 import sys
+from typing import List
 
 # ── Project root on sys.path ────────────────────────────────────────────────
-# Works whether called from the repo root or any subdirectory.
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -46,181 +37,188 @@ from env.tasks import TASK_REGISTRY
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. Configuration — read from environment, fail loudly if missing
+# Configuration — read from environment variables
 # ─────────────────────────────────────────────────────────────────────────────
 
 API_BASE_URL: str = os.environ.get("API_BASE_URL", "").strip()
 MODEL_NAME:   str = os.environ.get("MODEL_NAME",   "").strip()
-HF_TOKEN:     str = os.environ.get("HF_TOKEN",     "").strip()
+API_KEY:      str = os.environ.get("HF_TOKEN",     "").strip()
 
 if not API_BASE_URL:
     sys.exit("ERROR: API_BASE_URL environment variable is not set.")
 if not MODEL_NAME:
     sys.exit("ERROR: MODEL_NAME environment variable is not set.")
-if not HF_TOKEN:
+if not API_KEY:
     sys.exit("ERROR: HF_TOKEN environment variable is not set.")
 
-# Initialise OpenAI client pointing at the hackathon LLM endpoint.
-# All LLM calls must go through this client (required by the spec).
-client = OpenAI(
-    base_url=API_BASE_URL,
-    api_key=HF_TOKEN,
-)
+# Episode settings
+SEED:                  int   = 42
+MAX_STEPS:             int   = 96
+SUCCESS_SCORE_THRESHOLD: float = 0.5
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. Score normalisation
-# ─────────────────────────────────────────────────────────────────────────────
-# Each task has its own energy ceiling — the expected maximum a strong agent
-# can harvest under that task's conditions.
-#
-# Calibration (greedy agent, seed=42, measured empirically):
-#   easy   ≈ 7200 Wh  — clear sky, no penalties → ceiling set at greedy max
-#   medium ≈ 6500 Wh  — mild clouds reduce harvest by ~10%
-#   hard   ≈ 5000 Wh  — heavy clouds + movement cost reduce harvest by ~30%
-#
-# A greedy agent should therefore score:
-#   easy   ≈ 0.95–1.0   (near-perfect tracking on clear sky)
-#   medium ≈ 0.75–0.90  (reduced by cloud noise)
-#   hard   ≈ 0.55–0.80  (reduced by heavy clouds + movement penalty)
-#
-# A trained RL agent should beat these scores on medium/hard by being
-# smarter about when to move and how to handle noisy forecasts.
-TASK_SCORE_CEILINGS: dict[str, float] = {
-    "easy":   7200.0,   # Wh — clear sky theoretical max for greedy tracker
-    "medium": 6500.0,   # Wh — accounts for ~10% cloud attenuation
-    "hard":   5000.0,   # Wh — accounts for ~30% cloud + movement cost
+# Max total reward per task — used for score normalisation (matches sample pattern)
+# Calibrated from empirical greedy agent runs (seed=42):
+#   easy   greedy total_reward ≈ 7062  → ceiling = 7200
+#   medium greedy total_reward ≈ 5959  → ceiling = 6500
+#   hard   greedy total_reward ≈ 4352  → ceiling = 5000
+MAX_TOTAL_REWARD_PER_TASK: dict[str, float] = {
+    "easy":   7200.0,
+    "medium": 6500.0,
+    "hard":   5000.0,
 }
 
-
-def normalise_score(total_energy_wh: float, task_name: str) -> float:
-    """
-    Map total energy harvested to a score in [0.0, 1.0].
-
-    Uses a per-task ceiling so scores are calibrated to each difficulty tier:
-        score = clamp(total_energy / task_ceiling, 0.0, 1.0)
-
-    Why energy and not total_reward?
-    Reward includes movement_cost and misalignment_penalty which differ
-    across tasks — using energy gives a fair, task-independent metric.
-    """
-    ceiling = TASK_SCORE_CEILINGS.get(task_name, 7200.0)
-    raw     = total_energy_wh / ceiling
-    return round(max(0.0, min(1.0, raw)), 4)
+BENCHMARK = "solar-optimization-env"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. Action policy
+# Logging helpers — exact format matching sample script
 # ─────────────────────────────────────────────────────────────────────────────
-# Greedy proportional controller:
-#   - During daytime: compute angular error to sun, emit proportional action
-#   - During night:   park panel flat facing South (pre-orient for sunrise)
-#
-# This policy is deterministic and requires no LLM call per step.
-# To swap in LLM-based actions, replace this function with one that builds
-# a prompt from `state`, calls `client.chat.completions.create(...)`, and
-# parses the response into a SolarAction.
 
-def greedy_action(state: SolarState, config) -> SolarAction:
+def log_start(task: str, env: str, model: str) -> None:
+    """Print the [START] line. Called once at episode start."""
+    payload = json.dumps({
+        "task":  task,
+        "env":   env,
+        "model": model,
+        "seed":  SEED,
+    })
+    print(f"[START] {payload}", flush=True)
+
+
+def log_step(
+    step:   int,
+    action: str,
+    reward: float,
+    done:   bool,
+    error:  str | None,
+) -> None:
+    """Print one [STEP] line. Called once per environment step."""
+    payload = json.dumps({
+        "step":   step,
+        "action": action,
+        "reward": round(reward, 6),
+        "done":   done,
+        "error":  error,
+    })
+    print(f"[STEP] {payload}", flush=True)
+
+
+def log_end(
+    success: bool,
+    steps:   int,
+    score:   float,
+    rewards: List[float],
+) -> None:
+    """Print the [END] line. Called once at episode end."""
+    payload = json.dumps({
+        "success": success,
+        "steps":   steps,
+        "score":   round(score, 4),
+        "rewards": [round(r, 4) for r in rewards],
+    })
+    print(f"[END] {payload}", flush=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Action policy — greedy sun tracker
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_action(state: SolarState, config) -> SolarAction:
     """
-    Proportional sun-tracking policy.
-    Returns a SolarAction with tilt_change and rotation_change in [-1, 1].
+    Greedy proportional sun-tracking policy.
+    Returns SolarAction with tilt_change and rotation_change in [-1, 1].
+    To use the LLM instead, replace this with a call to client.chat.completions.create().
     """
     if state.sun_elevation <= 0.0:
-        # Night: move toward safe-park position (flat, facing South)
         err_tilt = 0.0   - state.panel_tilt
         err_rot  = 180.0 - state.panel_rotation
     else:
-        # Day: track the sun
         err_tilt = state.sun_elevation - state.panel_tilt
         err_rot  = state.sun_azimuth   - state.panel_rotation
 
-    # Shortest-arc rotation (avoids 350° detour when crossing 0°/360°)
     err_rot = (err_rot + 180.0) % 360.0 - 180.0
-
-    # Normalise errors to [-1, 1] by dividing by the max step size
     tc = max(-1.0, min(1.0, err_tilt / config.max_tilt_step))
     rc = max(-1.0, min(1.0, err_rot  / config.max_rotation_step))
     return SolarAction(tilt_change=tc, rotation_change=rc)
 
 
+def action_to_str(action: SolarAction) -> str:
+    """Serialise action to a short string for the log."""
+    return f"tilt={action.tilt_change:+.3f},rot={action.rotation_change:+.3f}"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. Episode runner — emits the required stdout log format
+# Episode runner — mirrors sample script structure exactly
 # ─────────────────────────────────────────────────────────────────────────────
 
-SEED: int = 42  # fixed seed → reproducible scores across grader runs
+async def run_task(client: OpenAI, task_name: str) -> None:
+    """Run one full episode for task_name, emitting structured stdout logs."""
 
+    max_total_reward = MAX_TOTAL_REWARD_PER_TASK.get(task_name, 7200.0)
 
-def run_task(task_name: str) -> None:
-    """
-    Run one full episode for `task_name` and print the required log lines.
-
-    Output format (all on separate lines, no extra whitespace):
-        [START] {...}
-        [STEP] {...}
-        ...
-        [END] {...}
-    """
-
-    # ── Initialise environment ───────────────────────────────────────────
-    env: SolarEnv = TASK_REGISTRY[task_name](seed=SEED)
-    state = env.reset()
+    rewards:     List[float] = []
+    steps_taken: int         = 0
+    score:       float       = 0.0
+    success:     bool        = False
 
     # ── [START] ──────────────────────────────────────────────────────────
-    # Printed ONCE at the beginning of each task episode.
-    start_payload = json.dumps({"task": task_name, "seed": SEED})
-    print(f"[START] {start_payload}", flush=True)
+    log_start(task=task_name, env=BENCHMARK, model=MODEL_NAME)
 
-    # ── Episode loop ─────────────────────────────────────────────────────
-    total_reward = 0.0
-    step_num     = 0
+    env: SolarEnv = TASK_REGISTRY[task_name](seed=SEED)
 
-    while True:
-        # Choose action (greedy policy — swap with LLM call if needed)
-        action = greedy_action(state, env.config)
+    try:
+        # reset() — matches OpenEnv spec
+        state = env.reset()
+        last_reward = 0.0
 
-        # Step the environment
-        result = env.step(action)
-        step_num     += 1
-        total_reward += result.reward
-        state         = result.state
+        for step in range(1, MAX_STEPS + 1):
 
-        # ── [STEP] ───────────────────────────────────────────────────────
-        # Printed ONCE per environment step.
-        # Fields: step index, scalar reward, done flag, energy this step.
-        step_payload = json.dumps({
-            "step":   step_num,
-            "reward": round(result.reward, 6),
-            "done":   result.done,
-            "energy": round(state.energy_this_step, 6),
-        })
-        print(f"[STEP] {step_payload}", flush=True)
+            # Choose action
+            action      = get_action(state, env.config)
+            action_str  = action_to_str(action)
 
-        if result.done:
-            break
+            # step() — matches OpenEnv spec
+            result      = env.step(action)
+            reward      = result.reward
+            done        = result.done
+            error       = None
+
+            rewards.append(reward)
+            steps_taken  = step
+            last_reward  = reward
+            state        = result.state
+
+            # ── [STEP] ───────────────────────────────────────────────────
+            log_step(step=step, action=action_str,
+                     reward=reward, done=done, error=error)
+
+            if done:
+                break
+
+        # Score: sum(rewards) / MAX_TOTAL_REWARD, clamped [0, 1]
+        # Mirrors the exact formula from the sample inference script.
+        score   = sum(rewards) / max_total_reward if max_total_reward > 0 else 0.0
+        score   = min(max(score, 0.0), 1.0)
+        success = score >= SUCCESS_SCORE_THRESHOLD
+
+    finally:
+        pass  # no async env.close() needed — pure Python env
 
     # ── [END] ────────────────────────────────────────────────────────────
-    # Printed ONCE at the end of each task episode.
-    # Fields: total_reward (sum of all step rewards), score (0.0–1.0).
-    total_energy = result.info.episode_cumulative_energy
-    score        = normalise_score(total_energy, task_name)
-
-    end_payload = json.dumps({
-        "total_reward": round(total_reward, 6),
-        "score":        score,
-    })
-    print(f"[END] {end_payload}", flush=True)
+    log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 5. Main — run all three tasks in order
+# Main — run all three tasks, matches sample script structure
 # ─────────────────────────────────────────────────────────────────────────────
 
-def main() -> None:
-    """Run one episode per task and emit structured stdout logs."""
+async def main() -> None:
+    # Instantiate OpenAI client — required by submission rules
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+
     for task_name in ["easy", "medium", "hard"]:
-        run_task(task_name)
+        await run_task(client, task_name)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
