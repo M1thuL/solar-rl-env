@@ -1,3 +1,13 @@
+---
+title: Solar Panel Optimization RL Environment
+emoji: ☀️
+colorFrom: yellow
+colorTo: orange
+sdk: docker
+pinned: false
+license: mit
+---
+
 # Solar Panel Optimization — Predictive AI-Controlled RL Environment
 
 > **Meta PyTorch Hackathon** · OpenEnv track  
