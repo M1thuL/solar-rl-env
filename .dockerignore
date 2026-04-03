@@ -1,0 +1,35 @@
+# .dockerignore — files excluded from the Docker build context.
+# Keeping the context small speeds up `docker build` and prevents
+# secrets / dev artifacts from leaking into the image.
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments (note: env/ is intentionally NOT excluded — it's our source package)
+.venv/
+venv/
+*.egg-info/
+
+# Version control
+.git/
+.gitignore
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Test artefacts
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Docs (not needed at runtime)
+*.md
+!README.md

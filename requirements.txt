@@ -1,0 +1,8 @@
+# requirements.txt — fully pinned for Docker (Python 3.10)
+pydantic>=2.0.0,<3.0.0
+gradio==4.42.0
+huggingface_hub==0.24.6
+jinja2==3.0.3
+markupsafe==2.1.5
+starlette==0.27.0
+numpy>=1.24.0,<2.0.0

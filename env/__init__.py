@@ -1,0 +1,1 @@
+# app/__init__.py — makes app/ a Python package so `python -m app.app` works
