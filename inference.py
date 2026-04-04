@@ -34,14 +34,14 @@ from env.tasks import TASK_REGISTRY
 # 1. Environment variables — fail loudly if missing
 # ─────────────────────────────────────────────────────────────────────────────
 
-API_BASE_URL: str = os.environ.get("API_BASE_URL", "").strip()
-MODEL_NAME:   str = os.environ.get("MODEL_NAME",   "").strip()
-HF_TOKEN:     str = os.environ.get("HF_TOKEN",     "").strip()
+# Defaults set for API_BASE_URL and MODEL_NAME only — NOT HF_TOKEN (per spec)
+API_BASE_URL: str = os.environ.get("API_BASE_URL", "<your-active-endpoint>").strip()
+MODEL_NAME:   str = os.environ.get("MODEL_NAME",   "<your-active-model>").strip()
+HF_TOKEN:     str = os.environ.get("HF_TOKEN")  # No default — must be set explicitly
 
-if not API_BASE_URL:
-    sys.exit("ERROR: API_BASE_URL environment variable is not set.")
-if not MODEL_NAME:
-    sys.exit("ERROR: MODEL_NAME environment variable is not set.")
+# Optional: used if loading env from docker image
+LOCAL_IMAGE_NAME: str = os.environ.get("LOCAL_IMAGE_NAME", "")
+
 if not HF_TOKEN:
     sys.exit("ERROR: HF_TOKEN environment variable is not set.")
 
