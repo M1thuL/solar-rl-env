@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "solar-rl-env"
+version = "1.0.0"
+description = "Predictive AI-Controlled Solar Optimization RL Environment"
+license = {text = "MIT"}
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "pydantic>=2.0.0,<3.0.0",
+    "numpy>=1.24.0,<2.0.0",
+    "openai>=1.0.0",
+    "openenv==0.1.13",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["env*", "app*", "server*"]
+
+[tool.openenv]
+name = "solar-rl-env"
+version = "1.0.0"
+entry_point = "env.solar_env:SolarEnv"
+config = "openenv.yaml"
