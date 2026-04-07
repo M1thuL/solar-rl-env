@@ -216,7 +216,9 @@ async def run_task(task_name: str) -> None:
 
         max_reward = MAX_TOTAL_REWARD.get(task_name, 7200.0)
         score      = sum(rewards) / max_reward if max_reward > 0 else 0.0
-        score      = min(max(score, 0.0), 1.0)
+        # Must be STRICTLY between 0 and 1 (exclusive) — grader rejects 0.0 and 1.0
+        score      = min(max(score, 0.001), 0.999)
+        score      = round(score, 4)
         success    = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as exc:
