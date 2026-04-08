@@ -1,296 +1,60 @@
-# openenv.yaml
-# OpenEnv specification for the Predictive AI-Controlled Solar Optimization System.
-#
-# This file is the single authoritative description of the environment contract.
-# It tells OpenEnv-compatible runners, evaluation harnesses, and the Hugging Face
-# leaderboard exactly what the env exposes — without them needing to read Python.
-#
-# Structure:
-#   metadata      → human-readable identity and purpose
-#   state_space   → every field in SolarState (models.py)
-#   action_space  → every field in SolarAction (models.py)
-#   reward        → how the scalar reward is computed
-#   tasks         → per-tier config that maps to EpisodeConfig (tasks.py)
-#   runtime       → episode mechanics (steps, duration, entry point)
-
-# ---------------------------------------------------------------------------
-# Metadata
-# ---------------------------------------------------------------------------
-
-name: solar-optimization-env
+name: solar-rl-env
 version: "1.0.0"
 description: >
-  Reinforcement learning environment that simulates a real-world dual-axis
-  solar panel tracking system. The agent must orient the panel (tilt + rotation)
-  to maximise energy output over a full simulated day, using a predictive
-  irradiance signal that becomes increasingly noisy at higher difficulty tiers.
-
-authors:
-  - name: OpenEnv Hackathon Team
-    framework: PyTorch
-
-tags:
-  - reinforcement-learning
-  - solar-energy
-  - continuous-control
-  - predictive-signals
-  - openenv
-
-license: MIT
-
-# ---------------------------------------------------------------------------
-# State space  (maps to SolarState in env/models.py)
-# ---------------------------------------------------------------------------
-# Every field the agent observes at each timestep.
-# dtype: all floats (continuous observation space).
-# ---------------------------------------------------------------------------
-
-state_space:
-
-  time_of_day:
-    dtype: float
-    range: [0.0, 24.0]
-    unit: hours
-    description: >
-      Current simulated hour of the day.
-      0.0 = midnight, 12.0 = solar noon, 24.0 = end of episode.
-
-  sun_azimuth:
-    dtype: float
-    range: "[0.0, 360.0)"
-    unit: degrees
-    description: >
-      Compass bearing of the sun.
-      0 = North, 90 = East, 180 = South (solar noon), 270 = West.
-
-  sun_elevation:
-    dtype: float
-    range: [-90.0, 90.0]
-    unit: degrees
-    description: >
-      Angle of the sun above the horizon.
-      Negative values indicate the sun is below the horizon (night).
-      Peaks at ~61.4° at solar noon for latitude 28.6°N.
-
-  predicted_irradiance:
-    dtype: float
-    range: [0.0, 1000.0]
-    unit: W/m²
-    description: >
-      Model-predicted solar irradiance for the current timestep.
-      On easy tasks this equals true irradiance exactly.
-      On medium/hard tasks Gaussian noise is added to simulate forecast error.
-      This is the agent's primary predictive signal — it must learn to act
-      on uncertain forecasts at higher difficulty levels.
-
-  panel_tilt:
-    dtype: float
-    range: [0.0, 90.0]
-    unit: degrees
-    description: >
-      Current panel tilt from horizontal.
-      0 = flat (horizontal), 90 = vertical.
-      Controlled via tilt_change in the action space.
-
-  panel_rotation:
-    dtype: float
-    range: "[0.0, 360.0)"
-    unit: degrees
-    description: >
-      Current panel compass orientation.
-      Follows the same convention as sun_azimuth.
-      Wraps around (359° → 0°) — there is no hard boundary.
-
-# ---------------------------------------------------------------------------
-# Action space  (maps to SolarAction in env/models.py)
-# ---------------------------------------------------------------------------
-# Continuous action space — both values must be in [-1, 1].
-# The environment scales them internally by max_tilt_step and
-# max_rotation_step from the active EpisodeConfig before applying.
-# ---------------------------------------------------------------------------
-
-action_space:
-
-  tilt_change:
-    dtype: float
-    range: [-1.0, 1.0]
-    description: >
-      Fractional change to apply to panel_tilt.
-      Scaled by max_tilt_step (5°) before application.
-      -1.0 = maximum tilt down,  +1.0 = maximum tilt up.
-      Result is clamped to [0°, 90°].
-
-  rotation_change:
-    dtype: float
-    range: [-1.0, 1.0]
-    description: >
-      Fractional change to apply to panel_rotation.
-      Scaled by max_rotation_step (10°) before application.
-      -1.0 = maximum counter-clockwise,  +1.0 = maximum clockwise.
-      Result wraps around [0°, 360°).
-
-# ---------------------------------------------------------------------------
-# Reward  (maps to RewardBreakdown in env/models.py)
-# ---------------------------------------------------------------------------
-
-reward:
-  description: >
-    Scalar reward at each timestep, decomposed into three terms:
-
-      reward = energy_reward - movement_cost - misalignment_penalty
-
-  components:
-
-    energy_reward:
-      formula: "energy_wh * energy_reward_scale"
-      description: >
-        Positive reward proportional to energy harvested (Wh).
-        energy_wh = irradiance * cos(angle_diff) * step_duration_hours.
-
-    movement_cost:
-      formula: "movement_penalty_weight * (|Δtilt| + |Δrotation|) / (max_tilt_step + max_rotation_step)"
-      description: >
-        Penalty for physically moving the panel.
-        Normalised to [0, movement_penalty_weight] regardless of step sizes.
-        Zero on easy tasks; strongest on hard tasks.
-
-    misalignment_penalty:
-      formula: "misalignment_penalty_weight * angle_diff_deg / 90.0"
-      description: >
-        Penalty proportional to how far the panel is from facing the sun.
-        angle_diff = sqrt(Δtilt² + Δrotation²), clamped to [0°, 90°].
-        Provides gradient signal even at night (when energy = 0) so the
-        agent learns to pre-position the panel for sunrise.
-        Suppressed when sun_elevation ≤ 0 (no correct alignment at night).
-
-# ---------------------------------------------------------------------------
-# Tasks  (maps to TASK_PARAMS in env/tasks.py)
-# ---------------------------------------------------------------------------
+  Reinforcement learning environment simulating a dual-axis solar panel
+  tracking system. The agent maximises energy output over a 24-hour day.
 
 tasks:
-
-  easy:
-    id: easy
+  - id: easy
+    name: Easy — clear sky
     difficulty: easy
-    description: >
-      Clear-sky environment with no movement penalty and a perfect irradiance
-      forecast. Use this tier to verify the environment and establish an
-      upper-bound on achievable performance.
+    max_steps: 96
     grader:
       type: deterministic
-      score_range: [0.001, 0.999]
-      score_field: score
-      log_format: openenv_v1
-    config:
-      cloud_noise_std: 0.0
-      movement_penalty_weight: 0.0
-      prediction_noise_std: 0.0
-      misalignment_penalty_weight: 0.1
-      energy_reward_scale: 1.0
-      score_range: [0.001, 0.999]
-    expected_behaviour: >
-      A well-trained agent should achieve near-perfect sun tracking and
-      harvest close to the theoretical maximum energy for a clear-sky day.
+      endpoint: /score
+      description: >
+        Score = cumulative energy harvested / 7200 Wh ceiling.
+        Clear sky, no movement penalty, perfect forecast.
+        Score is strictly between 0.001 and 0.999.
 
-  medium:
-    id: medium
+  - id: medium
+    name: Medium — mild clouds
     difficulty: medium
-    description: >
-      Realistic rooftop conditions with mild cloud noise, a small movement
-      penalty, and slight forecast uncertainty. The primary training target.
+    max_steps: 96
     grader:
       type: deterministic
-      score_range: [0.001, 0.999]
-      score_field: score
-      log_format: openenv_v1
-    config:
-      cloud_noise_std: 0.2
-      movement_penalty_weight: 0.1
-      prediction_noise_std: 0.1
-      misalignment_penalty_weight: 0.1
-      energy_reward_scale: 1.0
-      score_range: [0.001, 0.999]
-    expected_behaviour: >
-      The agent must balance frequent re-positioning against movement costs,
-      and learn to discount noisy forecast signals when making decisions.
+      endpoint: /score
+      description: >
+        Score = cumulative energy harvested / 6500 Wh ceiling.
+        Mild cloud noise, small movement penalty, slight forecast noise.
+        Score is strictly between 0.001 and 0.999.
 
-  hard:
-    id: hard
+  - id: hard
+    name: Hard — heavy clouds
     difficulty: hard
-    description: >
-      Challenging grid-scale conditions with heavy cloud noise, a strong
-      movement penalty, and a significantly noisy irradiance forecast.
-      Designed to stress-test agents trained on medium.
+    max_steps: 96
     grader:
       type: deterministic
-      score_range: [0.001, 0.999]
-      score_field: score
-      log_format: openenv_v1
-    config:
-      cloud_noise_std: 0.5
-      movement_penalty_weight: 0.3
-      prediction_noise_std: 0.3
-      misalignment_penalty_weight: 0.1
-      energy_reward_scale: 1.0
-      score_range: [0.001, 0.999]
-    expected_behaviour: >
-      The agent must commit to efficient panel positions, resist over-reacting
-      to noisy forecasts, and develop robust predictive strategies despite
-      high environmental uncertainty.
+      endpoint: /score
+      description: >
+        Score = cumulative energy harvested / 5000 Wh ceiling.
+        Heavy cloud noise, strong movement penalty, noisy forecast.
+        Score is strictly between 0.001 and 0.999.
 
-# ---------------------------------------------------------------------------
-# Runtime / episode mechanics
-# ---------------------------------------------------------------------------
+state_space:
+  time_of_day:    {type: float, range: [0.0, 24.0]}
+  sun_azimuth:    {type: float, range: [0.0, 360.0]}
+  sun_elevation:  {type: float, range: [-90.0, 90.0]}
+  predicted_irradiance: {type: float, range: [0.0, 1000.0]}
+  panel_tilt:     {type: float, range: [0.0, 90.0]}
+  panel_rotation: {type: float, range: [0.0, 360.0]}
+
+action_space:
+  tilt_change:     {type: float, range: [-1.0, 1.0]}
+  rotation_change: {type: float, range: [-1.0, 1.0]}
 
 runtime:
-
   max_steps: 96
-  step_duration_hours: 0.25         # 15-minute intervals
-  episode_duration_hours: 24.0      # one full simulated day
-  start_time_of_day: 0.0            # every episode begins at midnight
-
-  panel_initial_state:
-    tilt: 0.0                       # flat (horizontal)
-    rotation: 0.0                   # facing North
-
-  score_range:
-    min: 0.001
-    max: 0.999
-    note: "Score is strictly between 0 and 1 (exclusive). Never 0.0 or 1.0."
-
-  termination:
-    condition: "time_of_day >= 24.0"
-    description: >
-      Episode ends naturally when the simulated day is complete.
-      Truncation occurs if max_steps is reached before time_of_day = 24
-      (only possible if step_duration is changed from the default).
-
-  solar_model:
-    latitude_deg: 28.6              # New Delhi, India
-    peak_irradiance_wm2: 1000.0     # standard test condition
-    sunrise_hour: 6.0
-    sunset_hour: 18.0
-
-# ---------------------------------------------------------------------------
-# Grader configuration
-# ---------------------------------------------------------------------------
-
-grader:
-  score_range: [0.001, 0.999]
-  score_field: "score"
-  log_format: "openenv_v1"
-  tasks:
-    - easy
-    - medium
-    - hard
-
-# ---------------------------------------------------------------------------
-# Entry points  (for OpenEnv runners and Hugging Face Spaces)
-# ---------------------------------------------------------------------------
-
-entry_points:
-  env_module: "env.solar_env"
-  env_class: "SolarEnv"
-  task_registry: "env.tasks.TASK_REGISTRY"
-  baseline_script: "baseline/baseline.py"
-  gradio_app: "app/app.py"
+  step_duration_hours: 0.25
+  entry_point: env.solar_env:SolarEnv
+  server_port: 7860
