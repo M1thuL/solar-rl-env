@@ -57,7 +57,7 @@ state_space:
 
   sun_azimuth:
     dtype: float
-    range: [0.0, 360.0)
+    range: "[0.0, 360.0)"
     unit: degrees
     description: >
       Compass bearing of the sun.
@@ -94,7 +94,7 @@ state_space:
 
   panel_rotation:
     dtype: float
-    range: [0.0, 360.0)
+    range: "[0.0, 360.0)"
     unit: degrees
     description: >
       Current panel compass orientation.
@@ -170,10 +170,17 @@ reward:
 tasks:
 
   easy:
+    id: easy
+    difficulty: easy
     description: >
       Clear-sky environment with no movement penalty and a perfect irradiance
       forecast. Use this tier to verify the environment and establish an
       upper-bound on achievable performance.
+    grader:
+      type: deterministic
+      score_range: [0.001, 0.999]
+      score_field: score
+      log_format: openenv_v1
     config:
       cloud_noise_std: 0.0
       movement_penalty_weight: 0.0
@@ -186,9 +193,16 @@ tasks:
       harvest close to the theoretical maximum energy for a clear-sky day.
 
   medium:
+    id: medium
+    difficulty: medium
     description: >
       Realistic rooftop conditions with mild cloud noise, a small movement
       penalty, and slight forecast uncertainty. The primary training target.
+    grader:
+      type: deterministic
+      score_range: [0.001, 0.999]
+      score_field: score
+      log_format: openenv_v1
     config:
       cloud_noise_std: 0.2
       movement_penalty_weight: 0.1
@@ -201,10 +215,17 @@ tasks:
       and learn to discount noisy forecast signals when making decisions.
 
   hard:
+    id: hard
+    difficulty: hard
     description: >
       Challenging grid-scale conditions with heavy cloud noise, a strong
       movement penalty, and a significantly noisy irradiance forecast.
       Designed to stress-test agents trained on medium.
+    grader:
+      type: deterministic
+      score_range: [0.001, 0.999]
+      score_field: score
+      log_format: openenv_v1
     config:
       cloud_noise_std: 0.5
       movement_penalty_weight: 0.3
