@@ -180,6 +180,7 @@ tasks:
       prediction_noise_std: 0.0
       misalignment_penalty_weight: 0.1
       energy_reward_scale: 1.0
+      score_range: [0.001, 0.999]
     expected_behaviour: >
       A well-trained agent should achieve near-perfect sun tracking and
       harvest close to the theoretical maximum energy for a clear-sky day.
@@ -194,6 +195,7 @@ tasks:
       prediction_noise_std: 0.1
       misalignment_penalty_weight: 0.1
       energy_reward_scale: 1.0
+      score_range: [0.001, 0.999]
     expected_behaviour: >
       The agent must balance frequent re-positioning against movement costs,
       and learn to discount noisy forecast signals when making decisions.
@@ -209,6 +211,7 @@ tasks:
       prediction_noise_std: 0.3
       misalignment_penalty_weight: 0.1
       energy_reward_scale: 1.0
+      score_range: [0.001, 0.999]
     expected_behaviour: >
       The agent must commit to efficient panel positions, resist over-reacting
       to noisy forecasts, and develop robust predictive strategies despite
@@ -241,6 +244,19 @@ runtime:
     peak_irradiance_wm2: 1000.0     # standard test condition
     sunrise_hour: 6.0
     sunset_hour: 18.0
+
+# ---------------------------------------------------------------------------
+# Grader configuration
+# ---------------------------------------------------------------------------
+
+grader:
+  score_range: [0.001, 0.999]
+  score_field: "score"
+  log_format: "openenv_v1"
+  tasks:
+    - easy
+    - medium
+    - hard
 
 # ---------------------------------------------------------------------------
 # Entry points  (for OpenEnv runners and Hugging Face Spaces)

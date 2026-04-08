@@ -106,6 +106,17 @@ def health():
     return {"status": "ok"}
 
 
+@api.get("/score")
+def api_score():
+    """Return current episode score strictly in (0, 1)."""
+    max_reward = {"easy": 7200.0, "medium": 6500.0, "hard": 5000.0}
+    task = _env.task.value if hasattr(_env, "task") else "easy"
+    ceiling = max_reward.get(task, 7200.0)
+    raw = _env._cumulative_energy / ceiling if ceiling > 0 else 0.0
+    score = round(min(max(raw, 0.001), 0.999), 4)
+    return {"score": score, "task": task}
+
+
 # ---------------------------------------------------------------------------
 # Greedy policy + simulation (for Gradio UI)
 # ---------------------------------------------------------------------------
