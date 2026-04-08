@@ -232,6 +232,11 @@ runtime:
     tilt: 0.0                       # flat (horizontal)
     rotation: 0.0                   # facing North
 
+  score_range:
+    min: 0.001
+    max: 0.999
+    note: "Score is strictly between 0 and 1 (exclusive). Never 0.0 or 1.0."
+
   termination:
     condition: "time_of_day >= 24.0"
     description: >

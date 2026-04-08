@@ -66,6 +66,8 @@ class StepRequest(BaseModel):
     rotation_change: float = 0.0
 
 
+MAX_REWARD_PER_TASK = {"easy": 7200.0, "medium": 6500.0, "hard": 5000.0}
+
 @api.post("/reset")
 def api_reset(body: ResetRequest = None):
     global _env, _current_state
@@ -74,7 +76,11 @@ def api_reset(body: ResetRequest = None):
     task = task if task in TASK_REGISTRY else "easy"
     _env = TASK_REGISTRY[task](seed=seed)
     _current_state = _env.reset()
-    return _current_state.model_dump()
+    result = _current_state.model_dump()
+    result["task"] = task
+    result["seed"] = seed
+    result["max_reward"] = MAX_REWARD_PER_TASK.get(task, 7200.0)
+    return result
 
 
 @api.post("/step")
@@ -86,12 +92,20 @@ def api_step(body: StepRequest):
     )
     result = _env.step(action)
     _current_state = result.state
+
+    # Compute normalised score strictly in (0, 1) — never 0.0 or 1.0
+    task    = _env.task.value
+    ceiling = MAX_REWARD_PER_TASK.get(task, 7200.0)
+    raw     = result.info.episode_cumulative_energy / ceiling
+    score   = round(min(max(raw, 0.001), 0.999), 4)
+
     return {
         "state":      result.state.model_dump(),
         "reward":     result.reward,
         "terminated": result.terminated,
         "truncated":  result.truncated,
         "done":       result.done,
+        "score":      score,
         "info":       result.info.model_dump(),
     }
 
