@@ -89,10 +89,18 @@ def log_step(step: int, action: str, reward: float,
 
 def log_end(success: bool, steps: int,
             score: float, rewards: List[float]) -> None:
+    # Clamp here as final guarantee — score must be strictly in (0, 1)
+    safe_score = min(max(float(score), 0.001), 0.999)
+    safe_score = round(safe_score, 4)
+    # Ensure rounding didn't push to boundary
+    if safe_score <= 0.0:
+        safe_score = 0.001
+    if safe_score >= 1.0:
+        safe_score = 0.999
     payload = json.dumps({
         "success":      success,
         "steps":        steps,
-        "score":        round(score, 4),
+        "score":        safe_score,
         "total_reward": round(sum(rewards), 6),
     })
     print(f"[END] {payload}", flush=True)
