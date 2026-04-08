@@ -182,7 +182,7 @@ async def run_task(task_name: str) -> None:
     env: SolarEnv = TASK_REGISTRY[task_name](seed=SEED)
     rewards:     List[float] = []
     steps_taken: int         = 0
-    score:       float       = 0.0
+    score:       float       = 0.001  # never exactly 0.0 — grader requires strictly > 0
     success:     bool        = False
 
     log_start(task=task_name, model=MODEL_NAME)
@@ -215,16 +215,17 @@ async def run_task(task_name: str) -> None:
                 break
 
         max_reward = MAX_TOTAL_REWARD.get(task_name, 7200.0)
-        score      = sum(rewards) / max_reward if max_reward > 0 else 0.0
+        raw        = sum(rewards) / max_reward if max_reward > 0 else 0.0
         # Must be STRICTLY between 0 and 1 (exclusive) — grader rejects 0.0 and 1.0
-        score      = min(max(score, 0.001), 0.999)
-        score      = round(score, 4)
+        score      = round(min(max(raw, 0.001), 0.999), 4)
         success    = score >= SUCCESS_SCORE_THRESHOLD
 
     except Exception as exc:
         print(f"[DEBUG] Episode error: {exc}", flush=True)
 
     finally:
+        # Final safety clamp — ensures score is never exactly 0.0 or 1.0
+        score = round(min(max(score, 0.001), 0.999), 4)
         log_end(success=success, steps=steps_taken,
                 score=score, rewards=rewards)
 
